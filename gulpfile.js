@@ -11,13 +11,13 @@ gulp.task('clean', () => {
   return del(['./dist', './dist.zip']);
 });
 
-gulp.task('js', () => {
+gulp.task('bot', () => {
   return gulp.src('bot.js')
     .pipe(gulp.dest('dist/'));
 });
 
-gulp.task('strings', () => {
-  return gulp.src('lib/strings.js')
+gulp.task('lib', () => {
+  return gulp.src('lib/*')
     .pipe(gulp.dest('dist/lib/'));
 });
 
@@ -42,29 +42,12 @@ gulp.task('upload', function (callback) {
   awsLambda.deploy('./dist.zip', require("./lambda-config.js"), callback);
 });
 
-gulp.task('nodeploy', callback => {
-  return runSequence(
-    ['clean'],
-    ['js', 'node-mods', 'env'],
-    ['zip'],
-    callback
-  );
-});
-
 gulp.task('deploy', callback => {
   return runSequence(
     ['clean'],
-    ['js', 'strings', 'node-mods', 'env'],
+    ['bot', 'lib', 'node-mods', 'env'],
     ['zip'],
     ['upload'],
-    callback
-  );
-});
-
-gulp.task('nozip', callback => {
-  return runSequence(
-    ['clean'],
-    ['js', 'node-mods', 'env'],
     callback
   );
 });

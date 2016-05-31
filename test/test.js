@@ -8,7 +8,7 @@ const WebhookResponse = require('../lib/telegram').WebhookResponse;
 
 const STRINGS = require('../lib/strings');
 
-suite('Group chats', function() {
+suite('Group chats', function () {
   test('New chat member', function (done) {
     const update = {
       "update_id": 0,
@@ -38,7 +38,7 @@ suite('Group chats', function() {
       }
     };
 
-    bot(update, {}, function(err, response) {
+    bot(update, {}, function (err, response) {
       if (err) console.error(err);
       else console.log(response);
 
@@ -49,7 +49,7 @@ suite('Group chats', function() {
     });
   });
 
-  test('Left chat member', function(done) {
+  test('Left chat member', function (done) {
     const update = {
       "update_id": 0,
       "message": {
@@ -78,7 +78,7 @@ suite('Group chats', function() {
       }
     };
 
-    bot(update, {}, function(err, response) {
+    bot(update, {}, function (err, response) {
       if (err) console.error(err);
       else console.log(response);
 
@@ -116,7 +116,7 @@ suite('Group chats', function() {
       }
     };
 
-    bot(update, {}, function(err, response) {
+    bot(update, {}, function (err, response) {
       if (err) console.error(err);
       else console.log(response);
 
@@ -154,7 +154,7 @@ suite('Group chats', function() {
       }
     };
 
-    bot(update, {}, function(err, response) {
+    bot(update, {}, function (err, response) {
       if (err) console.error(err);
       else console.log(response);
 
@@ -195,7 +195,7 @@ suite('/eta', function () {
       }
     };
 
-    bot(update, {}, function(err, response) {
+    bot(update, {}, function (err, response) {
       if (err) console.error(err);
       else debug(response);
 
@@ -223,7 +223,7 @@ suite('/eta', function () {
           "type": "private"
         },
         "date": 0,
-        "text": "/eta 96049",
+        "text": "/eta 81111",
         "entities": [
           {
             "type": "bot_command",
@@ -234,7 +234,7 @@ suite('/eta', function () {
       }
     };
 
-    bot(update, {}, function(err, response) {
+    bot(update, {}, function (err, response) {
       if (err) console.error(err);
       else debug(response);
 
@@ -262,7 +262,7 @@ suite('/eta', function () {
           "type": "private"
         },
         "date": 0,
-        "text": "/eta 96049 24",
+        "text": "/eta 81111 24",
         "entities": [
           {
             "type": "bot_command",
@@ -273,12 +273,111 @@ suite('/eta', function () {
       }
     };
 
-    bot(update, {}, function(err, response) {
+    bot(update, {}, function (err, response) {
       if (err) done(err);
       else debug(response);
 
       assert.instanceOf(response, WebhookResponse, 'response should be a WebhookResponse');
       assert.match(response.text, /^<pre>Svc    Inc. Buses/, 'response text should be a header for bus etas');
+
+      done();
+    });
+  });
+});
+
+suite('Continue request', function () {
+  this.timeout(10000);
+
+  test('Message without command, in middle of request', function (done) {
+    const update = {
+      "update_id": 0,
+      "message": {
+        "message_id": 0,
+        "from": {
+          "id": 0,
+          "first_name": "TEST_USER"
+        },
+        "chat": {
+          "id": 0,
+          "first_name": "TEST_USER",
+          "type": "private"
+        },
+        "date": 0,
+        "text": "hello"
+      }
+    };
+
+    bot(update, {}, function (err, response) {
+      if (err) done(err);
+      else debug(response);
+
+      done();
+    });
+  });
+
+  test('Message without command, not in request', function (done) {
+    const update = {
+      "update_id": 0,
+      "message": {
+        "message_id": 0,
+        "from": {
+          "id": 0,
+          "first_name": "TEST_USER"
+        },
+        "chat": {
+          "id": 0,
+          "first_name": "TEST_USER",
+          "type": "private"
+        },
+        "date": 0,
+        "text": "hello"
+      }
+    };
+
+    bot(update, {}, function (err, response) {
+      if (err) done(err);
+      else debug(response);
+
+      done();
+    });
+  });
+});
+
+suite('Other commands', function () {
+  this.timeout(5000);
+
+  test('Favourites', function (done) {
+    const update = {
+      "update_id": 0,
+      "message": {
+        "message_id": 0,
+        "from": {
+          "id": 0,
+          "first_name": "TEST_USER"
+        },
+        "chat": {
+          "id": 0,
+          "first_name": "TEST_USER",
+          "type": "private"
+        },
+        "date": 0,
+        "text": "/favourites",
+        "entities": [
+          {
+            "type": "bot_command",
+            "offset": 0,
+            "length": 11
+          }
+        ]
+      }
+    };
+
+    bot(update, {}, function (err, response) {
+      if (err) console.error(err);
+      else debug(response);
+
+      assert.instanceOf(response, WebhookResponse, 'response should be a WebhookResponse');
+      // assert.strictEqual(response.text, STRINGS.SendBusStop, 'response should be a request for a bus stop');
 
       done();
     });

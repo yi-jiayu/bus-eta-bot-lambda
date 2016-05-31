@@ -2,7 +2,7 @@
 
 const fs = require('fs');
 const AWS = require('aws-sdk');
-const dynamoDb = new AWS.DynamoDB.DocumentClient({region: 'us-west-2'});
+const docClient = new AWS.DynamoDB.DocumentClient({region: 'us-west-2'});
 const debug = require('debug')('BusEtaBot-lambda:bot');
 const leftPad = require('left-pad');
 
@@ -35,6 +35,7 @@ Object.keys(apiKeys).forEach(key => process.env[key] = apiKeys[key]);
 /**
  *
  * @typedef {object} PipelineObj
+ * @prop {object} context - The context object provided by AWS Lambda
  * @prop {Telegram.Update} update - The original update object from Telegram
  * @prop {?string} command - The command extracted from the update text. May be null if no command was provided
  * @prop {?string} args - The rest of the update text behind the command, or all the update text if no command was provided.
@@ -46,23 +47,58 @@ Object.keys(apiKeys).forEach(key => process.env[key] = apiKeys[key]);
  */
 
 /**
- * Valid the incoming update object
- * @param {Telegram.Update} update
- * @returns {Promise.<PipelineObj>}
+ * Output from the validate pipeline stage
+ * @typedef {object} ValidateOutput
+ * @prop {object} context - The context object provided by AWS Lambda
+ * @prop {Telegram.Update} The original update object from Telegram
  */
-function validate(update) {
-  return new Promise(resolve => {
+
+/**
+ * Validate the incoming update object
+ * @param {Telegram.Update} update
+ * @param {object} context
+ * @returns {Promise.<ValidateOutput>}
+ */
+function validate(update, context) {
+  context = context || {};
+
+  return new Promise((resolve, reject) => {
     if (!update.hasOwnProperty('update_id')) throw new Error('invalid Telegram update');
     if (update.hasOwnProperty('edited_message')) update.message = update['edited_message'];
     if (!update.message.hasOwnProperty('text')) throw new Error('not a text message');
-    resolve({update});
+
+    docClient.put({
+      TableName: 'BusEtaBot-lambda-message-history',
+      Item: {
+        chatid: update.message.chat.id,
+        date: new Date().getTime(),
+        awsRequestId: context.awsRequestId || 'LOCAL_TEST',
+        functionVersion: context.functionVersion || 'LOCAL_TEST',
+        incoming: update.message.text,
+        userid: update.message.from.id,
+        firstname: update.message.from.first_name
+      }
+    }, err => {
+      if (err) debug('failed to save incoming message: ', err);
+      else debug('saved incoming message');
+    });
+
+    resolve({context, update});
   });
 }
 
 /**
+ * Output from the tokenise pipeline stage
+ * @typedef {object} TokeniseOutput
+ * @prop {Telegram.Update} update - The original update object from Telegram
+ * @prop {string} command - The command extracted from the update text. May be null if no command was provided
+ * @prop {string} args - The rest of the update text behind the command, or all the update text if no command was provided.
+ */
+
+/**
  * Tokenise the incoming update message text
  * @param {PipelineObj} pipelineObj
- * @returns {PipelineObj}
+ * @returns {TokeniseOutput}
  */
 function tokenise(pipelineObj) {
   const text = pipelineObj.update.message.text;
@@ -109,9 +145,13 @@ function execute(pipelineObj) {
     case '/eta':
       return eta(pipelineObj);
     case '/favourites':
+      return favourites(pipelineObj);
     case '/save':
+      return save(pipelineObj);
     case '/delete':
-    case '/edit':
+      return deleteSavedQuery(pipelineObj);
+    case '/redial':
+      return redial(pipelineObj);
     case null:
       return continueCommand(pipelineObj);
     default:
@@ -137,10 +177,10 @@ function eta(pipelineObj) {
     };
 
     return new Promise((resolve, reject) => {
-      dynamoDb.put(params, (err, data) => {
+      docClient.put(params, err => {
         if (err) reject(new Error(err));
         else {
-          debug(`stored ${JSON.stringify(data)} to dynamodb`);
+          debug(`saved state for user: ${JSON.stringify(pipelineObj.update.message.from)}`);
           pipelineObj.replyMethod = 'sendMessage';
           pipelineObj.replyParams = {
             chat_id: chatId,
@@ -156,9 +196,13 @@ function eta(pipelineObj) {
     const svcNo = argv[1];      // no destructuring assignment in node 4.3.2 ):
 
     return datamall.fetchBusEtas(busStop, svcNo).then(
-      (busEtaResponse) => {
+      busEtaResponse => {
         if (busEtaResponse.Services.length === 0) {
-          pipelineObj.replyText = STRINGS.NoSvcsServingBusStop;
+          pipelineObj.replyMethod = 'sendMessage';
+          pipelineObj.replyParams = {
+            chat_id: pipelineObj.update.message.chat.id,
+            text: STRINGS.NoSvcsServingBusStop
+          };
           return pipelineObj;
         } else {
           const etas = datamall.calculateEtaMinutes(busEtaResponse);
@@ -185,11 +229,63 @@ function eta(pipelineObj) {
 }
 
 /**
+ * Send the user a keyboard to choose from a list of their saved eta requests
+ * @param {PipelineObj} pipelineObj
+ */
+function favourites(pipelineObj) {
+  pipelineObj.replyMethod = 'sendMessage';
+  pipelineObj.replyParams = {
+    chat_id: pipelineObj.update.message.chat.id,
+    text: '(debug) send a keyboard with saved requests'
+  };
+  return pipelineObj;
+}
+
+/**
+ * Allow the user to save a eta query for a specific bus stop and optional service and give it a name
+ * @param {PipelineObj} pipelineObj
+ */
+function save(pipelineObj) {
+  pipelineObj.replyMethod = 'sendMessage';
+  pipelineObj.replyParams = {
+    chat_id: pipelineObj.update.message.chat.id,
+    text: '(debug) ask for a bus stop and optional service and a name to save the request as'
+  };
+  return pipelineObj;
+}
+
+/**
+ * Send the user a keyboard to choose one of their saved eta requests to delete
+ * @param {PipelineObj} pipelineObj
+ */
+function deleteSavedQuery(pipelineObj) {
+  pipelineObj.replyMethod = 'sendMessage';
+  pipelineObj.replyParams = {
+    chat_id: pipelineObj.update.message.chat.id,
+    text: '(debug) send a keyboard to select the saved request to be deleted'
+  };
+  return pipelineObj;
+}
+
+/**
+ * repeat the last eta request
+ * @param {PipelineObj} pipelineObj
+ */
+function redial(pipelineObj) {
+  pipelineObj.replyMethod = 'sendMessage';
+  pipelineObj.replyParams = {
+    chat_id: pipelineObj.update.message.chat.id,
+    text: '(debug) repeat the last eta request'
+  };
+  return pipelineObj;
+}
+
+/**
  * Create a message object to reply to the webhook with
  * @param {PipelineObj} pipelineObj
- * @returns {PipelineObj}
+ // * @returns {PipelineObj}
  */
-function createReply(pipelineObj) {
+function sendReply(pipelineObj) {
   const method = pipelineObj.replyMethod;
   const params = pipelineObj.replyParams;
 
@@ -197,6 +293,21 @@ function createReply(pipelineObj) {
     throw new Error('missing pipeline stages');
 
   pipelineObj.reply = new WebhookResponse(method, params);
+
+  docClient.put({
+    TableName: 'BusEtaBot-lambda-message-history',
+    Item: {
+      chatid: pipelineObj.update.message.chat.id,
+      date: new Date().getTime(),
+      awsRequestId: pipelineObj.context.awsRequestId || 'LOCAL_TEST',
+      functionVersion: pipelineObj.context.functionVersion || 'LOCAL_TEST',
+      outgoing: pipelineObj.replyParams.text
+    }
+  }, (err) => {
+    if (err) debug('failed to save outgoing reply: ', err);
+    else debug('saved outgoing reply');
+  });
+
   return pipelineObj;
 }
 
@@ -215,29 +326,38 @@ function continueCommand(pipelineObj) {
   };
 
   return new Promise((resolve, reject) => {
-    dynamoDb.get(params, (err, data) => {
+    docClient.get(params, (err, data) => {
       if (err) reject(new Error(err));
       else {
-        debug(data.Item);
-        pipelineObj.replyMethod = 'sendMessage';
-        pipelineObj.replyParams = {
-          chat_id: chatId,
-          text: `(not implemented) You are in the middle of an ${data.Item.command} request.`
-        };
-        resolve(pipelineObj);
+        debug(data);
+        const Item = data.Item || {};
+        const command = Item.command || null;
+        switch (command) {
+          case 'eta':
+            resolve(eta(pipelineObj));
+            break;
+          default:
+            const text = STRINGS.InvalidRequest;
+            pipelineObj.replyMethod = 'sendMessage';
+            pipelineObj.replyParams = {
+              chat_id: chatId,
+              text
+            };
+            resolve(pipelineObj);
+        }
       }
     });
   });
 }
 
-exports.bot = function (event, context, callback) {
-  console.log(JSON.stringify(event));
+exports.bot = function (update, context, callback) {
+  console.log(JSON.stringify(update));
 
-  validate(event)
+  validate(update, context)
     .then(tokenise)
     .then(sanitise)
     .then(execute)
-    .then(createReply)
+    .then(sendReply)
     .then(pipelineObj => {
       callback(null, pipelineObj.reply);
     })
