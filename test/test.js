@@ -43,7 +43,7 @@ suite('Group chats', function () {
       else console.log(response);
 
       // assert.instanceOf(response, WebhookResponse, 'response should be a WebhookResponse');
-      // assert.strictEqual(response.text, STRINGS.SendBusStop, 'response should be a request for a bus stop');
+      // assert.strictEqual(response.text, strings.SendBusStop, 'response should be a request for a bus stop');
 
       done();
     });
@@ -83,7 +83,7 @@ suite('Group chats', function () {
       else console.log(response);
 
       // assert.instanceOf(response, WebhookResponse, 'response should be a WebhookResponse');
-      // assert.strictEqual(response.text, STRINGS.SendBusStop, 'response should be a request for a bus stop');
+      // assert.strictEqual(response.text, strings.SendBusStop, 'response should be a request for a bus stop');
 
       done();
     });
@@ -121,7 +121,7 @@ suite('Group chats', function () {
       else console.log(response);
 
       // assert.instanceOf(response, WebhookResponse, 'response should be a WebhookResponse');
-      // assert.strictEqual(response.text, STRINGS.SendBusStop, 'response should be a request for a bus stop');
+      // assert.strictEqual(response.text, strings.SendBusStop, 'response should be a request for a bus stop');
 
       done();
     });
@@ -159,7 +159,7 @@ suite('Group chats', function () {
       else console.log(response);
 
       // assert.instanceOf(response, WebhookResponse, 'response should be a WebhookResponse');
-      // assert.strictEqual(response.text, STRINGS.SendBusStop, 'response should be a request for a bus stop');
+      // assert.strictEqual(response.text, strings.SendBusStop, 'response should be a request for a bus stop');
 
       done();
     });
@@ -239,7 +239,7 @@ suite('/eta', function () {
       else debug(response);
 
       assert.instanceOf(response, WebhookResponse, 'response should be a WebhookResponse');
-      assert.match(response.text, /^<pre>Svc    Inc. Buses/, 'response text should be a header for bus etas');
+      assert.match(response.text, /^Etas for/, 'response text should be a header for bus etas');
 
       done();
     });
@@ -278,7 +278,7 @@ suite('/eta', function () {
       else debug(response);
 
       assert.instanceOf(response, WebhookResponse, 'response should be a WebhookResponse');
-      assert.match(response.text, /^<pre>Svc    Inc. Buses/, 'response text should be a header for bus etas');
+      assert.match(response.text, /^Etas for/, 'response text should be a header for bus etas');
 
       done();
     });
@@ -377,7 +377,7 @@ suite('Other commands', function () {
       else debug(response);
 
       assert.instanceOf(response, WebhookResponse, 'response should be a WebhookResponse');
-      // assert.strictEqual(response.text, STRINGS.SendBusStop, 'response should be a request for a bus stop');
+      // assert.strictEqual(response.text, strings.SendBusStop, 'response should be a request for a bus stop');
 
       done();
     });
