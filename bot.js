@@ -15,16 +15,25 @@ const datamall = require('./lib/datamall');
 
 const BOT_ENDPOINT = `https://api.telegram.org/bot${process.env.BOT_TOKEN}/`;
 
-function validate(update) {
-  if (update.hasOwnProperty('update_id')) {
-    if (update.hasOwnProperty('message')) {
-      return dispatch(parse(update));
-    } else if (update.hasOwnProperty('edited_message')) {
-      return Promise.reject('ERR_NOT_IMPLEMENTED');
-    } else if (update.hasOwnProperty('callback_query')) {
-      return handleCallbackQuery(update.callback_query);
-    }
-  }
+function validate(req) {
+  const update = req.update;
+
+  return Promise.resolve()
+    .then(() => {
+      if (update.hasOwnProperty('update_id')) {
+        if (update.hasOwnProperty('message')) {
+          if (update.message.hasOwnProperty('text')) {
+            return dispatch(parse(req));
+          }
+        } else if (update.hasOwnProperty('edited_message')) {
+          if (update.edited_message.hasOwnProperty('text')) {
+            return Promise.reject('ERR_NOT_IMPLEMENTED');
+          }
+        } else if (update.hasOwnProperty('callback_query')) {
+          return handleCallbackQuery(req);
+        }
+      }
+    });
 }
 
 function tokenise(message) {
@@ -42,38 +51,43 @@ function tokenise(message) {
   return {command, args};
 }
 
-function sanitise(cmd, rgs) {
-  const command = cmd !== null
-    ? cmd.replace(/@\w+/g, '').replace(/\s+/g, ' ').trim()
+function sanitise(command, args) {
+  const sanitised = {};
+
+  sanitised.command = command !== null
+    ? command.replace(/@\w+/g, '').replace(/\s+/g, ' ').trim()
     : null;
-  const args = rgs
+  sanitised.args = args
     .replace(/@\w+/g, '')
     .replace(/\s+/g, ' ')
     .trim();
 
-  return {command, args};
+  return sanitised;
 }
 
-function parse(update) {
+function parse(req) {
+  const update = req.update;
   const message = update.message;
 
   const messageId = message.message_id;
   const chatId = message.chat.id;
   const userId = message.from.id;
+  const group = message.chat.type === 'group';
 
   const tokenised = tokenise(message);
   const sanitised = sanitise(tokenised.command, tokenised.args);
   const command = sanitised.command;
   const args = sanitised.args;
 
-  return {
-    update,
-    messageId,
-    chatId,
-    userId,
-    command,
-    args
-  };
+  req.messageId = messageId;
+  req.chatId = chatId;
+  req.userId = userId;
+  req.group = group;
+
+  req.command = command;
+  req.args = args;
+
+  return req;
 }
 
 function dispatch(req) {
@@ -90,10 +104,45 @@ function dispatch(req) {
       break;
     case '/redial':
       break;
+    case null:
+      return continueCommand(req);
+    default:
+      return invalidRequest(req);
   }
 }
 
-function handleCallbackQuery(query) {
+function invalidRequest(req) {
+  if (req.group) return;
+
+  const chatId = req.chatId;
+  return sendMessage(req, chatId, 'Invalid! (Sorry, my replies will be more friendly in future, but I am only in beta for now.)');
+}
+
+function continueCommand(req) {
+  const chatId = req.chatId;
+  const userId = req.userId;
+
+  const params = {
+    TableName: 'BusEtaBot-lambda-state',
+    Key: {
+      'chatid-userid-purpose': `${chatId}-${userId}-unfinished_command`
+    }
+  };
+
+  return docClient.get(params).promise()
+    .then(result => {
+      if (result.hasOwnProperty('Item')) {
+        switch (result.Item.command) {
+          case 'eta':
+            return eta(req)
+              .then(() => docClient.delete(params).send());
+        }
+      } else return invalidRequest(req);
+    });
+}
+
+function handleCallbackQuery(req) {
+  const query = req.update.callback_query;
   const data = JSON.parse(query.data);
   const message = query.message;
   const chatId = message.chat.id;
@@ -110,33 +159,63 @@ function handleCallbackQuery(query) {
 
     return docClient.get(params).promise()
       .then(result => {
-        debug(result);
         const original = result.Item;
         const text = original.text;
-        const options = original.options;
+        const options = original.options || {};
 
         delete options['reply_markup'];
 
-        return editMessageText(chatId, messageId, text, options);
+        const res = {
+          method: 'editMessageText',
+          chat_id: chatId,
+          message_id: messageId,
+          text
+        };
+
+        Object.keys(options).forEach(opt => res[opt] = options[opt]);
+
+        return res;
+      });
+  } else {
+    const busStop = data.busStop;
+    const svcNo = data.svcNo;
+
+    return datamall.fetchBusEtas(busStop, svcNo)
+      .then(busEtaResponse => {
+        const etas = getFormattedEtas(busStop, svcNo, busEtaResponse);
+        const text = etas.text;
+        const options = etas.options || {};
+
+        const res = {
+          method: 'editMessageText',
+          chat_id: chatId,
+          message_id: messageId,
+          text
+        };
+
+        Object.keys(options).forEach(opt => res[opt] = options[opt]);
+
+        return res;
       });
   }
 }
 
-function editMessageText(chatId, messageId, text, options) {
-  const edit = {
-    chat_id: chatId,
-    message_id: messageId,
-    text
-  };
-
-  Object.keys(options).forEach(opt => edit[opt] = options[opt]);
-
-  request.post({
-    uri: BOT_ENDPOINT + 'editMessageText',
-    json: true,
-    body: edit
-  });
-}
+// function editMessageText(chatId, messageId, text, options) {
+//   const edit = {
+//     chat_id: chatId,
+//     message_id: messageId,
+//     text
+//   };
+//
+//   options = options || {};
+//   Object.keys(options).forEach(opt => edit[opt] = options[opt]);
+//
+//   request.post({
+//     uri: BOT_ENDPOINT + 'editMessageText',
+//     json: true,
+//     body: edit
+//   });
+// }
 
 function cacheReply(req, reply, text, options) {
   const params = {
@@ -177,6 +256,7 @@ function sendMessage(req, chatId, text, options) {
     text
   };
 
+  options = options || {};
   Object.keys(options).forEach(opt => msg[opt] = options[opt]);
 
   return new Promise((resolve, reject) => {
@@ -200,13 +280,37 @@ function sendMessage(req, chatId, text, options) {
     .catch(err => debug(err));
 }
 
+function getFormattedEtas(busStop, svcNo, busEtaResponse) {
+  if (busEtaResponse.Services.length === 0) {
+    return {text: strings.NoSvcsServingBusStop};
+  } else return {
+    text: datamall.formatBusEtas(busStop, svcNo, busEtaResponse),
+    options: {
+      parse_mode: 'HTML',
+      reply_markup: JSON.stringify({
+        inline_keyboard: [
+          [{
+            text: 'Refresh',
+            callback_data: JSON.stringify({done: false, busStop, svcNo})
+          }],
+          [{
+            text: 'Done',
+            callback_data: JSON.stringify({done: true})
+          }]
+        ]
+      })
+    }
+  };
+}
+
 function eta(req) {
   const args = req.args;
   const chatId = req.chatId;
   const userId = req.userId;
-  const messageId = req.messageId;
 
   if (args.length == 0) {
+    if (req.group) return;
+
     const params = {
       TableName: 'BusEtaBot-lambda-state',
       Item: {
@@ -224,28 +328,11 @@ function eta(req) {
 
     return datamall.fetchBusEtas(busStop, svcNo)
       .then(busEtaResponse => {
-        if (busEtaResponse.Services.length === 0) {
-          return sendMessage(req, chatId, strings.NoSvcsServingBusStop);
-        } else {
-          const text = datamall.formatBusEtas(busStop, svcNo, busEtaResponse);
-          const options = {
-            parse_mode: 'HTML',
-            reply_markup: JSON.stringify({
-              inline_keyboard: [
-                [{
-                  text: 'Refresh',
-                  callback_data: JSON.stringify({done: false, busStop, svcNo})
-                }],
-                [{
-                  text: 'Done',
-                  callback_data: JSON.stringify({done: true, chatId})
-                }]
-              ]
-            })
-          };
+        const res = getFormattedEtas(busStop, svcNo, busEtaResponse);
+        const text = res.text;
+        const options = res.options;
 
-          return sendMessage(req, chatId, text, options);
-        }
+        return sendMessage(req, chatId, text, options);
       });
   }
 }
@@ -253,8 +340,13 @@ function eta(req) {
 exports.bot = function (update, context, callback) {
   console.log(JSON.stringify(update));
 
-  return validate(update)
-    .then(() => callback())
-    .catch(err => debug(err));
+  const req = {update, context, callback};
+
+  return validate(req)
+    .then(res => callback(null, res))
+    .catch(err => {
+      debug(err);
+      callback(err);
+    });
 };
 

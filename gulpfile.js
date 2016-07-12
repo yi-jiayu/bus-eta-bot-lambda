@@ -51,3 +51,12 @@ gulp.task('deploy', callback => {
     callback
   );
 });
+
+gulp.task('noinstall', callback => {
+  return runSequence(
+    ['bot', 'lib', 'env'],
+    ['zip'],
+    ['upload'],
+    callback
+  );
+});
