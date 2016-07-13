@@ -14,6 +14,8 @@ const strings = require('./lib/strings');
 const datamall = require('./lib/datamall');
 
 const BOT_ENDPOINT = `https://api.telegram.org/bot${process.env.BOT_TOKEN}/`;
+const STATE_TABLE = process.env.STATE_TABLE;
+const MESSAGE_CACHE_TABLE = process.env.MESSAGE_CACHE_TABLE;
 
 function validate(req) {
   const update = req.update;
@@ -123,7 +125,7 @@ function continueCommand(req) {
   const userId = req.userId;
 
   const params = {
-    TableName: 'BusEtaBot-lambda-state',
+    TableName: STATE_TABLE,
     Key: {
       'chatid-userid-purpose': `${chatId}-${userId}-unfinished_command`
     }
@@ -143,14 +145,25 @@ function continueCommand(req) {
 
 function handleCallbackQuery(req) {
   const query = req.update.callback_query;
-  const data = JSON.parse(query.data);
-  const message = query.message;
-  const chatId = message.chat.id;
-  const messageId = message.message_id;
 
-  if (data.done) {
+  if (!query.hasOwnProperty('message')) {
+    return
+  }
+
+  const data = JSON.parse(query.data);
+  const chatId = query.message.chat.id;
+  const messageId = query.message.message_id;
+
+  switch (data.t) {
+    case 'eta':
+      return handleEtaCallback(data, chatId, messageId);
+  }
+}
+
+function handleEtaCallback(data, chatId, messageId) {
+  if (data.d) {
     const params = {
-      TableName: 'BusEtaBot-lambda-message-cache-test',
+      TableName: MESSAGE_CACHE_TABLE,
       Key: {
         chat_id: chatId,
         message_id: messageId
@@ -177,8 +190,8 @@ function handleCallbackQuery(req) {
         return res;
       });
   } else {
-    const busStop = data.busStop;
-    const svcNo = data.svcNo;
+    const busStop = data.b;
+    const svcNo = data.s;
 
     return datamall.fetchBusEtas(busStop, svcNo)
       .then(busEtaResponse => {
@@ -199,23 +212,6 @@ function handleCallbackQuery(req) {
       });
   }
 }
-
-// function editMessageText(chatId, messageId, text, options) {
-//   const edit = {
-//     chat_id: chatId,
-//     message_id: messageId,
-//     text
-//   };
-//
-//   options = options || {};
-//   Object.keys(options).forEach(opt => edit[opt] = options[opt]);
-//
-//   request.post({
-//     uri: BOT_ENDPOINT + 'editMessageText',
-//     json: true,
-//     body: edit
-//   });
-// }
 
 function cacheReply(req, reply, text, options) {
   const params = {
@@ -291,11 +287,11 @@ function getFormattedEtas(busStop, svcNo, busEtaResponse) {
         inline_keyboard: [
           [{
             text: 'Refresh',
-            callback_data: JSON.stringify({done: false, busStop, svcNo})
+            callback_data: JSON.stringify({t: 'eta', d: false, b: busStop, s: svcNo})
           }],
           [{
             text: 'Done',
-            callback_data: JSON.stringify({done: true})
+            callback_data: JSON.stringify({t: 'eta', d: true})
           }]
         ]
       })
@@ -312,7 +308,7 @@ function eta(req) {
     if (req.group) return;
 
     const params = {
-      TableName: 'BusEtaBot-lambda-state',
+      TableName: STATE_TABLE,
       Item: {
         'chatid-userid-purpose': `${chatId}-${userId}-unfinished_command`,
         command: 'eta'
@@ -338,7 +334,7 @@ function eta(req) {
 }
 
 exports.bot = function (update, context, callback) {
-  console.log(JSON.stringify(update));
+  debug(JSON.stringify(update));
 
   const req = {update, context, callback};
 
