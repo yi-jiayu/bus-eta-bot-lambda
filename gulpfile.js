@@ -1,6 +1,8 @@
 "use strict";
 
+const debug = require('debug')('gulp');
 var gulp = require('gulp');
+const rename = require('gulp-rename');
 var zip = require('gulp-zip');
 var del = require('del');
 var install = require('gulp-install');
@@ -28,14 +30,31 @@ gulp.task('node-mods', () => {
 });
 
 gulp.task('env', () => {
-  return gulp.src('./.env.json')
-    .pipe(gulp.dest('dist/'));
+  if (process.env.ENVIRONMENT === 'production') {
+    debug('building for production');
+    return gulp.src('./.env.json')
+      .pipe(gulp.dest('dist/'));
+  } else {
+    debug('building for development');
+    return gulp.src('./.devenv.json')
+      .pipe(rename('.env.json'))
+      .pipe(gulp.dest('dist/'));
+  }
 });
 
 gulp.task('zip', () => {
   return gulp.src(['dist/**/*', 'dist/.env.json', '!dist/package.json'], {nodir: true})
     .pipe(zip('dist.zip'))
     .pipe(gulp.dest('./'));
+});
+
+gulp.task('build', callback => {
+  return runSequence(
+    ['clean'],
+    ['bot', 'lib', 'env'],
+    ['zip'],
+    callback
+  );
 });
 
 gulp.task('upload', function (callback) {

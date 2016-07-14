@@ -105,7 +105,7 @@ function dispatch(req) {
     case '/delete':
       break;
     case '/redial':
-      break;
+      return redial(req);
     case null:
       return continueCommand(req);
     default:
@@ -114,6 +114,7 @@ function dispatch(req) {
 }
 
 function invalidRequest(req) {
+  // for now, don't send error messages if we're in a group chat
   if (req.group) return;
 
   const chatId = req.chatId;
@@ -216,7 +217,7 @@ function handleEtaCallback(data, chatId, messageId) {
 function cacheReply(req, reply, text, options) {
   const params = {
     RequestItems: {
-      'BusEtaBot-lambda-message-cache-test': [
+      [MESSAGE_CACHE_TABLE]: [
         {
           PutRequest: {
             Item: {
@@ -299,12 +300,39 @@ function getFormattedEtas(busStop, svcNo, busEtaResponse) {
   };
 }
 
+function redial(req) {
+  const chatId = req.chatId;
+  const userId = req.userId;
+
+  const params = {
+    TableName: STATE_TABLE,
+    Key: {
+      'chatid-userid-purpose': `${chatId}-${userId}-redial`
+    }
+  };
+
+  return docClient.get(params).promise()
+    .then(result => {
+      if (!result.hasOwnProperty('Item')) {
+        // there is no previous request to redial
+        // fixme: also tell the user why the request is invalid
+        return invalidRequest(req);
+      } else {
+        const busStop = result.Item.busStop;
+        const svcNo = result.Item.svcNo;
+
+        return _eta(req, chatId, busStop, svcNo);
+      }
+    });
+}
+
 function eta(req) {
   const args = req.args;
   const chatId = req.chatId;
   const userId = req.userId;
 
   if (args.length == 0) {
+    // for now, don't allow two part queries if it's a group chat
     if (req.group) return;
 
     const params = {
@@ -322,15 +350,31 @@ function eta(req) {
     const busStop = argv[0];
     const svcNo = argv[1] || null;
 
-    return datamall.fetchBusEtas(busStop, svcNo)
-      .then(busEtaResponse => {
-        const res = getFormattedEtas(busStop, svcNo, busEtaResponse);
-        const text = res.text;
-        const options = res.options;
+    return _eta(req, chatId, busStop, svcNo)
+      .then(() => {
+        const params = {
+          TableName: STATE_TABLE,
+          Item: {
+            'chatid-userid-purpose': `${chatId}-${userId}-redial`,
+            busStop,
+            svcNo
+          }
+        };
 
-        return sendMessage(req, chatId, text, options);
+        docClient.put(params).send();
       });
   }
+}
+
+function _eta(req, chatId, busStop, svcNo) {
+  return datamall.fetchBusEtas(busStop, svcNo)
+    .then(busEtaResponse => {
+      const res = getFormattedEtas(busStop, svcNo, busEtaResponse);
+      const text = res.text;
+      const options = res.options;
+
+      return sendMessage(req, chatId, text, options);
+    });
 }
 
 exports.bot = function (update, context, callback) {
