@@ -1,0 +1,8 @@
+{
+  "DEBUG": "BusEtaBot-lambda:*",
+  "LTA_DATAMALL_ACCOUNT_KEY": "RdNJHYKxJIacimLXBpvLtQ==",
+  "LTA_DATAMALL_USER_ID": "391a6ec4-bfd3-48aa-9c73-b449c73dc9cf",
+  "BOT_TOKEN": "187530042:AAEXXCnUZhcqXXSPO15im4xKspnrfhGiFvU",
+  "STATE_TABLE": "BusEtaBot-state-dev",
+  "MESSAGE_CACHE_TABLE": "BusEtaBot-message-cache-dev"
+}
