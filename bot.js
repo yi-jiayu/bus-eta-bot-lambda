@@ -1,8 +1,7 @@
 "use strict";
 
 // load environment variables
-const fs = require('fs');
-const apiKeys = JSON.parse(fs.readFileSync('./.env.json'));
+const apiKeys = require('./.env.json');
 Object.keys(apiKeys).forEach(key => process.env[key] = apiKeys[key]);
 
 const debug = require('debug')('BusEtaBot-lambda:bot');
@@ -16,6 +15,38 @@ const datamall = require('./lib/datamall');
 const BOT_ENDPOINT = `https://api.telegram.org/bot${process.env.BOT_TOKEN}/`;
 const STATE_TABLE = process.env.STATE_TABLE;
 const MESSAGE_CACHE_TABLE = process.env.MESSAGE_CACHE_TABLE;
+
+/**
+ * Functional version of validate
+ * @param req - Request to be validated
+ * @returns {object} valid, type
+ */
+function fValidate(req) {
+  const update = req.update;
+
+  // updates from telegram must have an update_id field
+  if (!update.hasOwnProperty('update_id')) {
+    return {valid: false};
+  }
+
+  if (update.hasOwnProperty('message')) {
+    if (update.hasOwnProperty('text')) {
+      return {valid: true, type: 'txt_msg'};
+    } else return {valid: false};
+  }
+
+  if (update.hasOwnProperty('edited_message')) {
+    if (update.hasOwnProperty('text')) {
+      return {valid: true, type: 'edited_txt_msg'};
+    } else return {valid: false};
+  }
+
+  if (update.hasOwnProperty('callback_query')) {
+    return {valid: true, type: 'cb_query'};
+  }
+
+  return {valid: false};
+}
 
 function validate(req) {
   const update = req.update;
@@ -38,6 +69,13 @@ function validate(req) {
     });
 }
 
+/**
+ * Splits an incoming message into a command and arguments. If an incoming message does not contain a bot command,
+ * the entire message text is treated as the arguments. Uses the message's entities field instead of parsing it on our
+ * own.
+ * @param message
+ * @returns {{command: string|null, args: string}}
+ */
 function tokenise(message) {
   const text = message.text;
   const entities = message.entities || [];
@@ -53,6 +91,12 @@ function tokenise(message) {
   return {command, args};
 }
 
+/**
+ * Removes tags, collapses whitespace and trims leading and trailing whitespace.
+ * @param command
+ * @param args
+ * @returns {{command: string|null, args: string}}
+ */
 function sanitise(command, args) {
   const sanitised = {};
 
@@ -67,6 +111,12 @@ function sanitise(command, args) {
   return sanitised;
 }
 
+/**
+ * Parses an incoming messages by tokenising and sanitising its content as well as extracting important attributes such
+ * as the chat_id, message_id, user_id and whether the messages was from a group chat.
+ * @param req
+ * @returns {object}
+ */
 function parse(req) {
   const update = req.update;
   const message = update.message;
@@ -92,6 +142,10 @@ function parse(req) {
   return req;
 }
 
+/**
+ * Calls the appropriate handler for parsed incoming messages.
+ * @param req
+ */
 function dispatch(req) {
   const command = req.command;
 
@@ -113,6 +167,10 @@ function dispatch(req) {
   }
 }
 
+/**
+ * Invalid request handler
+ * @param req
+ */
 function invalidRequest(req) {
   // for now, don't send error messages if we're in a group chat
   if (req.group) return;
@@ -121,6 +179,11 @@ function invalidRequest(req) {
   return sendMessage(req, chatId, 'Invalid! (Sorry, my replies will be more friendly in future, but I am only in beta for now.)');
 }
 
+/**
+ * Handler for messages without a bot command
+ * @param req
+ * @returns {Promise}
+ */
 function continueCommand(req) {
   const chatId = req.chatId;
   const userId = req.userId;
@@ -144,6 +207,10 @@ function continueCommand(req) {
     });
 }
 
+/**
+ * Callback query handler, further delegates to specific handlers for each type of callback query.
+ * @param req
+ */
 function handleCallbackQuery(req) {
   const query = req.update.callback_query;
 
@@ -161,6 +228,13 @@ function handleCallbackQuery(req) {
   }
 }
 
+/**
+ * Handler for eta callback queries
+ * @param data
+ * @param chatId
+ * @param messageId
+ * @returns {Promise.<TResult>}
+ */
 function handleEtaCallback(data, chatId, messageId) {
   if (data.d) {
     const params = {
@@ -214,6 +288,13 @@ function handleEtaCallback(data, chatId, messageId) {
   }
 }
 
+/**
+ * Caches replies so that in future messages can be updated based on edited_message
+ * @param req
+ * @param reply
+ * @param text
+ * @param options
+ */
 function cacheReply(req, reply, text, options) {
   const params = {
     RequestItems: {
@@ -247,6 +328,14 @@ function cacheReply(req, reply, text, options) {
   return docClient.batchWrite(params).promise();
 }
 
+/**
+ * Makes a HTTP request to the Telegram bot API to send a message
+ * @param req
+ * @param chatId
+ * @param text
+ * @param options
+ * @returns {Promise}
+ */
 function sendMessage(req, chatId, text, options) {
   const msg = {
     chat_id: chatId,
@@ -300,6 +389,11 @@ function getFormattedEtas(busStop, svcNo, busEtaResponse) {
   };
 }
 
+/**
+ * Redial command handler
+ * @param req
+ * @returns {Promise}
+ */
 function redial(req) {
   const chatId = req.chatId;
   const userId = req.userId;
@@ -326,6 +420,11 @@ function redial(req) {
     });
 }
 
+/**
+ * Eta command handler
+ * @param req
+ * @returns {Promise}
+ */
 function eta(req) {
   const args = req.args;
   const chatId = req.chatId;
